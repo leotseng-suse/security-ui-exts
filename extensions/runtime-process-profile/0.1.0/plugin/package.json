@@ -1,0 +1,19 @@
+{
+  "name": "runtime-process-profile",
+  "description": "runtime-process-profile plugin",
+  "version": "0.1.0",
+  "private": false,
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "runtime-process-profile-0.1.0.umd.min.js"
+}

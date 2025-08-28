@@ -1,0 +1,63 @@
+apiVersion: v1
+entries:
+  network:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-08-28T15:18:03.524388+08:00"
+    description: network plugin
+    digest: 6483a9840eab66f7358a980c95c95904c0a962488a9e94fd74d365f162e0fb0c
+    name: network
+    type: application
+    urls:
+    - assets/network/network-0.1.0.tgz
+    version: 0.1.0
+  runtime-process-profile:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-08-28T15:18:03.524515+08:00"
+    description: runtime-process-profile plugin
+    digest: d25417998b0b0727f34f015092144e9a3bb8b65c3d84857576151b6689bc2a78
+    name: runtime-process-profile
+    type: application
+    urls:
+    - assets/runtime-process-profile/runtime-process-profile-0.1.0.tgz
+    version: 0.1.0
+  sbombastic-image-vulnerability-scanner:
+  - annotations:
+      catalog.cattle.io/certified: rancher
+      catalog.cattle.io/namespace: cattle-ui-plugin-system
+      catalog.cattle.io/os: linux
+      catalog.cattle.io/permits-os: linux, windows
+      catalog.cattle.io/rancher-version: '>= 2.10.0'
+      catalog.cattle.io/scope: management
+      catalog.cattle.io/ui-component: plugins
+      catalog.cattle.io/ui-extensions-version: '>= 3.0.0 < 4.0.0'
+    apiVersion: v2
+    appVersion: 0.1.0
+    created: "2025-08-28T15:18:03.524635+08:00"
+    description: SBOMbastic Image Vulnerability Scanner plugin
+    digest: e01ec605788b92bb3293a8fe7074d5446000ccc0dc91500cb2406c3299e9d541
+    name: sbombastic-image-vulnerability-scanner
+    type: application
+    urls:
+    - assets/sbombastic-image-vulnerability-scanner/sbombastic-image-vulnerability-scanner-0.1.0.tgz
+    version: 0.1.0
+generated: "2025-08-28T15:18:03.524182+08:00"
