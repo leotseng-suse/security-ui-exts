@@ -1,0 +1,11 @@
+{
+  "name": "common",
+  "description": "Shared components/types used across security-ui-exts extensions. Not an installable extension itself.",
+  "version": "0.0.0",
+  "private": true,
+  "files": [
+    "**/*"
+  ],
+  "rancher": true,
+  "main": "common-0.0.0.umd.min.js"
+}

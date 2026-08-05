@@ -1,0 +1,20 @@
+{
+  "name": "runtime-enforcer",
+  "description": "runtime-enforcer plugin",
+  "version": "0.1.0",
+  "private": false,
+  "icon": "https://raw.githubusercontent.com/rancher/security-ui-exts/main/pkg/runtime-enforcer/assets/img/runtime-enforcer-logo.svg",
+  "rancher": true,
+  "engines": {
+    "node": ">=16"
+  },
+  "devDependencies": {
+    "@vue/cli-plugin-babel": "~5.0.0",
+    "@vue/cli-service": "~5.0.0",
+    "@vue/cli-plugin-typescript": "~5.0.0"
+  },
+  "files": [
+    "**/*"
+  ],
+  "main": "runtime-enforcer-0.1.0.umd.min.js"
+}

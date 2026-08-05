@@ -1,0 +1,12 @@
+nameOverride: ""
+fullnameOverride: ""
+plugin:
+  enabled: true
+  versionOverride: ""
+  endpoint: >-
+    https://raw.githubusercontent.com/leotseng-suse/security-ui-exts/617-testing/extensions/common/0.0.0
+  compressedEndpoint: >-
+    https://raw.githubusercontent.com/leotseng-suse/security-ui-exts/617-testing/extensions/common/0.0.0.tgz
+  noCache: false
+  noAuth: false
+  metadata: {}
