@@ -121,6 +121,8 @@ export default defineConfig({
                 run: {
                     id: process.env.QASE_RUN_ID ? parseInt(process.env.QASE_RUN_ID) : undefined,
                     title: process.env.QASE_RUN_TITLE || getRunTitle(),
+                    description: process.env.QASE_RUN_DESCRIPTION,
+                    tags: process.env.QASE_RUN_TAGS ? process.env.QASE_RUN_TAGS.split(',') : undefined,
                 },
             },
         }]

@@ -291,34 +291,6 @@ jobs:
           kubectl wait clusters.postgresql.cnpg.io --all -n "$SBOMSCANNER_NS" --for=condition=Ready --timeout=5m
           kubectl get pods -n "$SBOMSCANNER_NS"
 
-      # A fresh install has no scan results; IMAGES > DOWNLOAD needs at least one scanned image.
-      # SBOMScanner's own single-tag test asset keeps the scan small and deterministic.
-      - name: Seed scan data
-        run: |
-          kubectl apply -n "$SBOMSCANNER_NS" -f - <<EOF
-          apiVersion: sbomscanner.kubewarden.io/v1alpha1
-          kind: Registry
-          metadata:
-            name: e2e-seed
-          spec:
-            uri: ghcr.io
-            catalogType: OCIDistribution
-            repositories:
-              - name: kubewarden/sbomscanner/test-assets/golang
-            platforms:
-              - arch: amd64
-                os: linux
-          ---
-          apiVersion: sbomscanner.kubewarden.io/v1alpha1
-          kind: ScanJob
-          metadata:
-            name: e2e-seed
-          spec:
-            registry: e2e-seed
-          EOF
-          kubectl wait scanjob/e2e-seed -n "$SBOMSCANNER_NS" --for=condition=Complete --timeout=15m
-          kubectl get scanjob/e2e-seed -n "$SBOMSCANNER_NS" -o jsonpath='{.status.scannedImagesCount} image(s) scanned{"\n"}'
-
       # ================================================================================================
       # Vulnerability Scanner UI extension
 
@@ -367,6 +339,70 @@ jobs:
           kubectl wait uiplugin/vulnerability-scanner -n cattle-ui-plugin-system \
             --for=jsonpath='{.status.phase}'=cached --timeout=3m
 
+      # Record what this run actually tested, read back from the installed cluster.
+      # Feeds the Qase run (title, description, tags) and the GitHub job summary.
+      - name: Summarize test environment
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # Installed chart version of a Helm release: "0.13.0 (app v0.13.0)"
+          helm_ver() {
+            helm list -n "$1" -o json | jq -r --arg r "$2" \
+              '.[] | select(.name == $r) | "\(.chart | capture("-(?<v>[0-9][^/]*)$").v) (app \(.app_version))"'
+          }
+
+          case "${CHART_REPO#e2e-rancher-}" in
+            prime)          channel="Prime" ;;
+            primerc)        channel="Prime RC" ;;
+            primealpha)     channel="Prime alpha" ;;
+            community)      channel="Community" ;;
+            communityalpha) channel="Community alpha" ;;
+            *)              channel="${CHART_REPO#e2e-rancher-}" ;;
+          esac
+          k8s=$(kubectl version -o json | jq -r .serverVersion.gitVersion)  # v1.33.5+rke2r1 / +k3s1
+          scanner=$(helm_ver "$SBOMSCANNER_NS" ssvs)
+          cnpg=$(helm_ver cnpg-system cnpg)
+
+          if [ "$UI_FROM" == source ]; then
+            sha=${PR_HEAD_SHA:-$GITHUB_SHA}
+            ref=${PR_NUMBER:+PR#$PR_NUMBER}
+            ref=${ref:-$GITHUB_REF_NAME}
+            ui="$ref@${sha:0:7}"
+            ui_detail="built from source - $ref @ $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/commit/$sha (package.json $(jq -r .version pkg/vulnerability-scanner/package.json))"
+          else
+            ui_chart=$(helm_ver cattle-ui-plugin-system vulnerability-scanner)
+            ui="release ${ui_chart%% *}"
+            ui_detail="released chart $ui_chart from https://rancher.github.io/security-ui-exts"
+          fi
+
+          title="Rancher $channel $CHART_VER ($RANCHER_ENV, $k8s) | UI $ui | SBOMScanner ${scanner%% *} ($SCANNER_FROM) | #$GITHUB_RUN_NUMBER"
+          details=(
+            "Rancher|$channel $CHART_VER, installed with $RANCHER_ENV"
+            "Kubernetes (local cluster)|$k8s"
+            "UI extension|$ui_detail"
+            "SBOMScanner|$scanner from $SCANNER_FROM charts"
+            "CloudNativePG|$cnpg"
+            "Trigger|$GITHUB_EVENT_NAME by $GITHUB_ACTOR"
+            "GitHub run|$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+          )
+
+          {
+            echo "QASE_RUN_TITLE=$title"
+            echo "QASE_RUN_TAGS=$RANCHER_ENV,rancher-$CHART_VER,ui-$UI_FROM,scanner-$SCANNER_FROM"
+            echo "QASE_RUN_DESCRIPTION<<EOF_DESCRIPTION"
+            for d in "${details[@]}"; do echo "${d%%|*}: ${d#*|}"; done
+            echo "EOF_DESCRIPTION"
+          } >> "$GITHUB_ENV"
+
+          {
+            echo "### $title"
+            echo "| Component | Version |"
+            echo "|---|---|"
+            for d in "${details[@]}"; do echo "| ${d%%|*} | ${d#*|} |"; done
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$title"
+
       # ================================================================================================
       # Playwright
 
@@ -388,7 +424,7 @@ jobs:
           QASE_MODE: ${{ secrets.QASE_TESTOPS_API_TOKEN != '' && 'testops' || 'off' }}
           QASE_TESTOPS_API_TOKEN: ${{ secrets.QASE_TESTOPS_API_TOKEN }}
           QASE_TESTOPS_PROJECT: ${{ vars.QASE_TESTOPS_PROJECT || secrets.QASE_TESTOPS_PROJECT }}
-          QASE_RUN_TITLE: E2E UI ${{ env.RANCHER_ENV }} / Rancher ${{ env.CHART_VER }} / ${{ github.event_name }} #${{ github.run_number }}
+          # QASE_RUN_TITLE / QASE_RUN_DESCRIPTION / QASE_RUN_TAGS come from "Summarize test environment"
 
       # ================================================================================================
       # Artifacts & diagnostics
