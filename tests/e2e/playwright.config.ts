@@ -109,13 +109,20 @@ export default defineConfig({
         ["html", {
             open: "never"
         }],
+        // playwright-qase-reporter v2 options; QASE_* env vars (QASE_TESTOPS_RUN_TITLE, ...) override these
         ["playwright-qase-reporter", {
             mode: process.env.QASE_MODE || 'off',
-            projectCode: process.env.QASE_TESTOPS_PROJECT,
-            apiToken: process.env.QASE_TESTOPS_API_TOKEN,
-            runId: process.env.QASE_RUN_ID,
-            runTitle: process.env.QASE_RUN_TITLE || getRunTitle(),
-            uploadAttachments: true,
+            testops: {
+                api: {
+                    token: process.env.QASE_TESTOPS_API_TOKEN,
+                },
+                project: process.env.QASE_TESTOPS_PROJECT,
+                uploadAttachments: true,
+                run: {
+                    id: process.env.QASE_RUN_ID ? parseInt(process.env.QASE_RUN_ID) : undefined,
+                    title: process.env.QASE_RUN_TITLE || getRunTitle(),
+                },
+            },
         }]
     ]
 

@@ -373,7 +373,7 @@ jobs:
       - name: Install Playwright
         working-directory: tests/e2e
         run: |
-          npm install
+          npm ci
           npx playwright install --with-deps chromium
 
       - name: Run tests
@@ -384,6 +384,11 @@ jobs:
           CI: true
           SHOW_CONSOLE_ERRORS: false
           TEST_RETRIES: 1
+          # Upload to Qase only when a token is configured, so forks and PRs without secrets still pass
+          QASE_MODE: ${{ secrets.QASE_TESTOPS_API_TOKEN != '' && 'testops' || 'off' }}
+          QASE_TESTOPS_API_TOKEN: ${{ secrets.QASE_TESTOPS_API_TOKEN }}
+          QASE_TESTOPS_PROJECT: ${{ vars.QASE_TESTOPS_PROJECT || secrets.QASE_TESTOPS_PROJECT }}
+          QASE_RUN_TITLE: E2E UI ${{ env.RANCHER_ENV }} / Rancher ${{ env.CHART_VER }} / ${{ github.event_name }} #${{ github.run_number }}
 
       # ================================================================================================
       # Artifacts & diagnostics
