@@ -10,8 +10,6 @@ node_modules/
 # UI ext automation
 _reports_/
 jsonReports/
-package-lock.json
-package.json
 pw_report_summary.html
 tests/sbomscanner.test.ts-snapshots/
 uiversion.json

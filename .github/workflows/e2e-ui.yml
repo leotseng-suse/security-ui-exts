@@ -1,0 +1,424 @@
+name: E2E UI Tests
+
+permissions:
+  contents: read
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Where Rancher runs (the scanner is installed into its local cluster)
+        type: choice
+        default: rke2
+        options:
+          - rke2    # RKE2 on the runner + Rancher Helm chart
+          - k3s     # k3d (k3s in docker) + Rancher Helm chart
+          - docker  # docker run rancher/rancher - local cluster is Rancher's built-in k3s
+      rancher:
+        description: Rancher version constraint - p2.14 | c2.13 | p* (latest prime) | p2.15-0 (devel)
+        default: 'p*'
+      k8s:
+        description: Kubernetes minor for rke2/k3s, e.g. v1.33 (empty = derived from Rancher support matrix)
+        default: ''
+      ui:
+        description: Vulnerability Scanner UI extension from
+        type: choice
+        default: source
+        options:
+          - source  # build pkg/vulnerability-scanner from this checkout
+          - github  # https://rancher.github.io/security-ui-exts/
+      scanner:
+        description: SBOMScanner backend charts from
+        type: choice
+        default: community
+        options:
+          - community  # charts.kubewarden.io + cloudnative-pg.github.io, no credentials
+          - appco      # SUSE Application Collection (product build), needs APPCO_* secrets
+      sbomscanner:
+        description: SBOMScanner chart version (empty = latest)
+        default: ''
+
+  pull_request:
+    branches: [main]
+    paths:
+      - 'pkg/vulnerability-scanner/**'
+      - 'package.json'
+      - 'yarn.lock'
+      - 'tests/e2e/**'
+      - '.github/workflows/e2e-ui.yml'
+
+  schedule:
+    - cron: '0 21 * * *'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CLUSTER_NAME: e2e-ui
+  RANCHER_FQDN: 127.0.0.1.nip.io
+  # First value after && must be truthy, otherwise the value after || is returned
+  RANCHER_ENV: ${{ inputs.environment || 'rke2' }}
+  RANCHER: ${{ inputs.rancher || 'p*' }}
+  # Read by rancher.sh / cluster_k3d.sh; also used to pick the RKE2 channel
+  K3S: ${{ inputs.k8s || '' }}
+  UI_FROM: ${{ github.event_name == 'schedule' && 'github' || inputs.ui || 'source' }}
+  SCANNER_FROM: ${{ inputs.scanner || 'community' }}
+  SBOMSCANNER_VERSION: ${{ inputs.sbomscanner || '' }}
+  SBOMSCANNER_NS: cattle-sbomscanner-system
+
+jobs:
+  e2e:
+    if: github.event_name != 'schedule' || github.repository_owner == 'rancher'
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      # ================================================================================================
+      # Cluster + Rancher
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Rancher install scripts shared with kubewarden-ui
+      # https://github.com/kubewarden/kubewarden-end-to-end-tests/blob/main/scripts/rancher.sh
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: kubewarden/kubewarden-end-to-end-tests
+          ref: c20f179dfca99038204e4f93bd48fa917a7fd718 # main
+          path: .e2e-tools
+          persist-credentials: false
+
+      # A cancelled or killed run on a reused runner can leave Rancher behind, and rancher.sh refuses to
+      # install over it. No-op on fresh GitHub-hosted VMs.
+      - name: Pre-clean
+        run: .github/scripts/e2e-cleanup.sh
+
+      - name: Install k3d
+        if: env.RANCHER_ENV == 'k3s'
+        run: curl -fsSL https://raw.githubusercontent.com/k3d-io/k3d/main/install.sh | bash
+
+      # Dry run translates the RANCHER constraint into an exact chart and a supported k8s minor
+      - name: Resolve versions
+        working-directory: .e2e-tools
+        run: |
+          out=$(DRY=1 ./scripts/rancher.sh 2>&1) || true
+          echo "$out"
+
+          chart=$(grep -oP '^CHART: \K\S+' <<< "$out")  # e2e-rancher-prime/rancher:2.14.2
+          [[ "$chart" == e2e-rancher-*/rancher:* ]] || { echo "::error::No Rancher chart matches '$RANCHER'"; exit 1; }
+          k8s=$(grep -oP '^v[0-9]+\.[0-9]+' <<< "${K3S:-$(grep -oP '^K3S version: \K\S+' <<< "$out")}") || true
+
+          {
+            echo "CHART_REPO=${chart%/rancher:*}"
+            echo "CHART_VER=${chart##*:}"
+            echo "K8S_MINOR=$k8s"
+          } | tee -a "$GITHUB_ENV"
+
+      # ------------------------------------------------------------------------------------------------
+      # rke2: install the cluster, then rancher.sh detects it and only installs cert-manager + Rancher
+
+      - name: Install RKE2
+        if: env.RANCHER_ENV == 'rke2'
+        run: |
+          curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_CHANNEL="${K8S_MINOR:-stable}" sh -
+          sudo systemctl enable --now rke2-server.service
+
+          mkdir -p ~/.kube
+          sudo cat /etc/rancher/rke2/rke2.yaml > ~/.kube/config
+          chmod 600 ~/.kube/config
+          kubectl wait node --all --for=condition=Ready --timeout=5m
+
+          # Bundled ingress controller is deployed by a helm-install job after the node is Ready
+          timeout 600 bash -c 'until kubectl get ingressclass -o name | grep -q .; do sleep 10; done'
+          kubectl wait job --all -n kube-system --for=condition=complete --timeout=10m
+          if ! kubectl get ingressclass -o json | jq -e '.items[] | select(.metadata.annotations["ingressclass.kubernetes.io/is-default-class"] == "true")' >/dev/null; then
+            kubectl annotate "$(kubectl get ingressclass -o name | head -1)" ingressclass.kubernetes.io/is-default-class=true
+          fi
+          kubectl get nodes -o wide
+
+      # k3s: rancher.sh creates the k3d cluster itself
+      - name: Install Rancher (Helm)
+        if: env.RANCHER_ENV != 'docker'
+        working-directory: .e2e-tools
+        run: make rancher
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASSWORD: ${{ secrets.DOCKERHUB_PASSWORD }}
+
+      # ------------------------------------------------------------------------------------------------
+      # docker: single container, no cluster or Helm install up front
+
+      - name: Install Rancher (docker)
+        if: env.RANCHER_ENV == 'docker'
+        run: |
+          case "$CHART_REPO" in
+            e2e-rancher-community|e2e-rancher-communityalpha)
+              image=rancher/rancher ;;
+            e2e-rancher-prime)
+              image=registry.rancher.com/rancher/rancher ;;
+            e2e-rancher-primerc|e2e-rancher-primealpha)
+              image=stgregistry.suse.com/rancher/rancher
+              agent=stgregistry.suse.com/rancher/rancher-agent:v$CHART_VER ;;
+            *)
+              echo "::error::Docker install does not support $CHART_REPO"; exit 1 ;;
+          esac
+
+          docker run -d --name rancher --restart=unless-stopped --privileged \
+            -p 80:80 -p 443:443 \
+            -e CATTLE_BOOTSTRAP_PASSWORD=sa \
+            ${agent:+-e CATTLE_AGENT_IMAGE="$agent"} \
+            "$image:v$CHART_VER"
+
+      # ------------------------------------------------------------------------------------------------
+      # Skip the first-login wizard so the existing login setup (tests/e2e/tests/global.setup.ts) works as-is
+
+      - name: Bootstrap Rancher admin
+        run: |
+          url="https://$RANCHER_FQDN"
+          timeout 600 bash -c 'until curl -fsk "$0/ping" >/dev/null; do sleep 5; done' "$url"
+
+          password="$(openssl rand -hex 12)"
+          echo "::add-mask::$password"
+
+          token=$(curl -fsk "$url/v3-public/localProviders/local?action=login" \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"admin","password":"sa","responseType":"json"}' | jq -er .token)
+          echo "::add-mask::$token"
+          api() { curl -fsk -H "Authorization: Bearer $token" -H 'Content-Type: application/json' "$@"; }
+
+          api "$url/v3/users?action=changepassword" \
+            -d "$(jq -n --arg p "$password" '{currentPassword:"sa", newPassword:$p}')"
+          for kv in "server-url=$url" "eula-agreed=$(date -u +%FT%TZ)" "first-login=false"; do
+            api -X PUT "$url/v3/settings/${kv%%=*}" -d "$(jq -n --arg v "${kv#*=}" '{value:$v}')" >/dev/null
+          done
+
+          for i in {1..60}; do
+            state=$(api "$url/v3/clusters/local" | jq -r .state) || true
+            [ "$state" == active ] && break
+            [ "$i" -ne 60 ] && sleep 10 || { echo "::error::Local cluster is '$state'"; exit 1; }
+          done
+
+          # Docker install has no kubeconfig on the runner - use Rancher's proxy to the local cluster
+          if [ "$RANCHER_ENV" == docker ]; then
+            mkdir -p ~/.kube
+            api -X POST "$url/v3/clusters/local?action=generateKubeconfig" | jq -er .config > ~/.kube/config
+            chmod 600 ~/.kube/config
+            yq -i '.clusters[].cluster |= (del(.["certificate-authority-data"]) | .["insecure-skip-tls-verify"] = true)' ~/.kube/config
+            kubectl get nodes -o wide
+          fi
+
+          {
+            echo "RANCHER_URL=$url"
+            echo "TEST_USERNAME=admin"
+            echo "TEST_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+
+      # rancher.sh already installs cert-manager for rke2/k3s
+      - name: Install cert-manager (docker)
+        if: env.RANCHER_ENV == 'docker'
+        run: |
+          helm repo add jetstack https://charts.jetstack.io --force-update
+          helm install cert-manager jetstack/cert-manager -n cert-manager --create-namespace \
+            --set crds.enabled=true --wait --timeout 5m
+
+      # ================================================================================================
+      # SBOMScanner backend - same order, names and namespaces as the extension installer
+      # (pkg/vulnerability-scanner/types/vulnerability-scanner.ts). Replicas reduced to fit a GitHub-hosted runner.
+
+      # CNPG needs a PVC: k3s ships local-path, RKE2 ships no StorageClass at all
+      - name: Ensure default StorageClass
+        run: |
+          if ! kubectl get storageclass -o json | jq -e '.items[] | select(.metadata.annotations["storageclass.kubernetes.io/is-default-class"] == "true")' >/dev/null; then
+            kubectl apply -f https://raw.githubusercontent.com/rancher/local-path-provisioner/v0.0.31/deploy/local-path-storage.yaml
+            kubectl annotate storageclass local-path storageclass.kubernetes.io/is-default-class=true --overwrite
+            kubectl rollout status deploy/local-path-provisioner -n local-path-storage --timeout=3m
+          fi
+          kubectl get storageclass
+
+      # AppCo charts and images need credentials: one pull secret per namespace, like the installer's auth duplication
+      - name: Log in to SUSE Application Collection
+        if: env.SCANNER_FROM == 'appco'
+        run: |
+          [ -n "$APPCO_USERNAME" ] && [ -n "$APPCO_PASSWORD" ] || { echo "::error::APPCO_USERNAME/APPCO_PASSWORD secrets are required"; exit 1; }
+          helm registry login dp.apps.rancher.io -u "$APPCO_USERNAME" --password-stdin <<< "$APPCO_PASSWORD"
+          for ns in cnpg-system "$SBOMSCANNER_NS"; do
+            kubectl create namespace "$ns" --dry-run=client -o yaml | kubectl apply -f -
+            kubectl create secret docker-registry application-collection -n "$ns" \
+              --docker-server=dp.apps.rancher.io \
+              --docker-username="$APPCO_USERNAME" --docker-password="$APPCO_PASSWORD" \
+              --dry-run=client -o yaml | kubectl apply -f -
+          done
+        env:
+          APPCO_USERNAME: ${{ secrets.APPCO_USERNAME }}
+          APPCO_PASSWORD: ${{ secrets.APPCO_PASSWORD }}
+
+      - name: Install CloudNativePG operator
+        run: |
+          if [ "$SCANNER_FROM" == appco ]; then
+            chart=oci://dp.apps.rancher.io/charts/cloudnative-pg
+            args=(--set "global.imagePullSecrets[0]=application-collection")
+          else
+            helm repo add cnpg https://cloudnative-pg.github.io/charts --force-update
+            chart=cnpg/cloudnative-pg
+            args=()
+          fi
+          helm install cnpg "$chart" -n cnpg-system --create-namespace "${args[@]}" --wait --timeout 5m
+
+      - name: Install SBOMScanner
+        run: |
+          if [ "$SCANNER_FROM" == appco ]; then
+            chart=oci://dp.apps.rancher.io/charts/suse-security-vulnerability-scanner
+            args=(--set "global.imagePullSecrets[0]=application-collection")
+          else
+            helm repo add kubewarden https://charts.kubewarden.io --force-update
+            chart=kubewarden/sbomscanner
+            args=()
+          fi
+          helm install ssvs "$chart" -n "$SBOMSCANNER_NS" --create-namespace "${args[@]}" \
+            ${SBOMSCANNER_VERSION:+--version "$SBOMSCANNER_VERSION"} \
+            --set controller.replicas=1 \
+            --set storage.replicas=1 \
+            --set worker.replicas=1 \
+            --set storage.postgres.cnpg.instances=1 \
+            --wait --timeout 10m
+
+          # helm --wait does not cover the Postgres cluster created by the CNPG operator
+          kubectl wait clusters.postgresql.cnpg.io --all -n "$SBOMSCANNER_NS" --for=condition=Ready --timeout=5m
+          kubectl get pods -n "$SBOMSCANNER_NS"
+
+      # A fresh install has no scan results; IMAGES > DOWNLOAD needs at least one scanned image.
+      # SBOMScanner's own single-tag test asset keeps the scan small and deterministic.
+      - name: Seed scan data
+        run: |
+          kubectl apply -n "$SBOMSCANNER_NS" -f - <<EOF
+          apiVersion: sbomscanner.kubewarden.io/v1alpha1
+          kind: Registry
+          metadata:
+            name: e2e-seed
+          spec:
+            uri: ghcr.io
+            catalogType: OCIDistribution
+            repositories:
+              - name: kubewarden/sbomscanner/test-assets/golang
+            platforms:
+              - arch: amd64
+                os: linux
+          ---
+          apiVersion: sbomscanner.kubewarden.io/v1alpha1
+          kind: ScanJob
+          metadata:
+            name: e2e-seed
+          spec:
+            registry: e2e-seed
+          EOF
+          kubectl wait scanjob/e2e-seed -n "$SBOMSCANNER_NS" --for=condition=Complete --timeout=15m
+          kubectl get scanjob/e2e-seed -n "$SBOMSCANNER_NS" -o jsonpath='{.status.scannedImagesCount} image(s) scanned{"\n"}'
+
+      # ================================================================================================
+      # Vulnerability Scanner UI extension
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24'
+
+      - name: Build and serve extension from source
+        if: env.UI_FROM == 'source'
+        run: |
+          npm install -g yarn
+          yarn install --frozen-lockfile
+          VERSION=0.0.1 yarn build-pkg vulnerability-scanner
+          nohup yarn serve-pkgs > serve-pkgs.log 2>&1 &
+          timeout 60 bash -c 'until curl -fs http://127.0.0.1:4500/ >/dev/null; do sleep 2; done'
+
+      # Same object the UI creates with Extensions > Developer Load > "Persist extension".
+      # The browser runs on this runner, so it loads the bundle straight from 127.0.0.1:4500.
+      - name: Register extension from source
+        if: env.UI_FROM == 'source'
+        run: |
+          kubectl apply -f - <<EOF
+          apiVersion: catalog.cattle.io/v1
+          kind: UIPlugin
+          metadata:
+            name: vulnerability-scanner
+            namespace: cattle-ui-plugin-system
+          spec:
+            plugin:
+              name: vulnerability-scanner
+              version: 0.0.1
+              endpoint: http://127.0.0.1:4500/vulnerability-scanner-0.0.1/vulnerability-scanner-0.0.1.umd.min.js
+              noCache: true
+              noAuth: true
+              metadata:
+                developer: "true"
+                direct: "true"
+          EOF
+
+      - name: Install extension from GitHub Pages
+        if: env.UI_FROM == 'github'
+        run: |
+          helm repo add security-ui-exts https://rancher.github.io/security-ui-exts --force-update
+          helm install vulnerability-scanner security-ui-exts/vulnerability-scanner \
+            -n cattle-ui-plugin-system --create-namespace --wait
+          kubectl wait uiplugin/vulnerability-scanner -n cattle-ui-plugin-system \
+            --for=jsonpath='{.status.phase}'=cached --timeout=3m
+
+      # ================================================================================================
+      # Playwright
+
+      - name: Install Playwright
+        working-directory: tests/e2e
+        run: |
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Run tests
+        working-directory: tests/e2e
+        timeout-minutes: 60
+        run: npx playwright test
+        env:
+          CI: true
+          SHOW_CONSOLE_ERRORS: false
+          TEST_RETRIES: 1
+
+      # ================================================================================================
+      # Artifacts & diagnostics
+
+      - name: Collect cluster diagnostics
+        if: failure() || cancelled()
+        run: |
+          set +e  # collect as much as possible, the cluster may be half-installed
+          mkdir -p diagnostics
+          kubectl get pods -A -o wide > diagnostics/pods.txt
+          kubectl get events -A --sort-by=.lastTimestamp > diagnostics/events.txt
+          kubectl get uiplugins -A -o yaml > diagnostics/uiplugins.yaml
+          case "$RANCHER_ENV" in
+            docker) docker logs --tail 2000 rancher > diagnostics/rancher.log 2>&1 ;;
+            rke2)   sudo journalctl -u rke2-server --no-pager -n 2000 > diagnostics/rke2-server.log ;;
+          esac
+          [ "$RANCHER_ENV" != docker ] && kubectl logs -n cattle-system -l app=rancher --tail=500 > diagnostics/rancher.log
+          for d in $(kubectl get deploy -n "$SBOMSCANNER_NS" -o name); do
+            kubectl logs -n "$SBOMSCANNER_NS" "$d" --all-containers --tail=500 > "diagnostics/${d##*/}.log"
+          done
+          cp serve-pkgs.log diagnostics/ 2>/dev/null || true
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: playwright-report-${{ github.run_attempt }}
+          path: |
+            tests/e2e/playwright-report/
+            tests/e2e/test-results/
+            tests/e2e/uiversion.json
+            diagnostics/
+          retention-days: 15
+          if-no-files-found: ignore
+
+      - name: Clean up
+        if: always()
+        # Only matters on self-hosted runners; GitHub-hosted VMs are discarded
+        run: .github/scripts/e2e-cleanup.sh

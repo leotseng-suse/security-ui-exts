@@ -84,15 +84,16 @@ export default defineConfig({
   use: {
         baseURL: process.env.RANCHER_URL || "https://RANCHERURL",
         
-        headless: false,
+        // CI runs headless at full speed; local runs keep the visible, slowed-down browser
+        headless: !!process.env.CI,
     	  ignoreHTTPSErrors: true,
         screenshot: "on",
-        video: "on",
+        video: process.env.CI ? "retain-on-failure" : "on",
         launchOptions: {
-             slowMo: 500,
+             slowMo: process.env.CI ? 0 : 500,
              args: ["--start-maximized"]
         },
-        viewport: null,
+        viewport: process.env.CI ? { width: 1600, height: 900 } : null,
     },
 
     //timeout: 60 * 1000 * 5,
