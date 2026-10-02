@@ -309,26 +309,30 @@ jobs:
 
       # Same object the UI creates with Extensions > Developer Load > "Persist extension".
       # The browser runs on this runner, so it loads the bundle straight from 127.0.0.1:4500.
+      # The dashboard refuses to load a plugin without catalog.cattle.io/ui-extensions-version
+      # (@rancher/shell config/uiplugins.js shouldNotLoadPlugin), so copy the package's
+      # catalog.cattle.io/* annotations like a chart install does.
       - name: Register extension from source
         if: env.UI_FROM == 'source'
         run: |
-          kubectl apply -f - <<EOF
-          apiVersion: catalog.cattle.io/v1
-          kind: UIPlugin
-          metadata:
-            name: vulnerability-scanner
-            namespace: cattle-ui-plugin-system
-          spec:
-            plugin:
-              name: vulnerability-scanner
-              version: 0.0.1
-              endpoint: http://127.0.0.1:4500/vulnerability-scanner-0.0.1/vulnerability-scanner-0.0.1.umd.min.js
-              noCache: true
-              noAuth: true
-              metadata:
-                developer: "true"
-                direct: "true"
-          EOF
+          jq '.rancher.annotations | with_entries(select(.key | startswith("catalog.cattle.io/")))
+              | {
+                  apiVersion: "catalog.cattle.io/v1",
+                  kind: "UIPlugin",
+                  metadata: {name: "vulnerability-scanner", namespace: "cattle-ui-plugin-system"},
+                  spec: {plugin: {
+                    name: "vulnerability-scanner",
+                    version: "0.0.1",
+                    endpoint: "http://127.0.0.1:4500/vulnerability-scanner-0.0.1/vulnerability-scanner-0.0.1.umd.min.js",
+                    noCache: true,
+                    noAuth: true,
+                    metadata: (. + {developer: "true", direct: "true"})
+                  }}
+                }' pkg/vulnerability-scanner/package.json > uiplugin.json
+          jq -e '.spec.plugin.metadata["catalog.cattle.io/ui-extensions-version"]' uiplugin.json >/dev/null \
+            || { echo "::error::pkg/vulnerability-scanner/package.json has no catalog.cattle.io/ui-extensions-version annotation"; exit 1; }
+          kubectl apply -f uiplugin.json
+          jq .spec.plugin.metadata uiplugin.json
 
       - name: Install extension from GitHub Pages
         if: env.UI_FROM == 'github'
