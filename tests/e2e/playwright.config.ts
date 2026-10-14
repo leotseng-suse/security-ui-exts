@@ -52,47 +52,56 @@ export default defineConfig({
  testDir: './tests',
  ////fullyParallel: true,
  
-  // 
+  // setup (login) ─┬─► chromium       every test except @needs-data
+  //                └─► data (seed) ─► chromium-data  @needs-data tests only
   projects: [
     {
       name: 'setup',
-      //testMatch: /global-setup.ts/,
-      testMatch: ['**/*.setup.ts',
-      ],
-      
+      testMatch: /global\.setup\.ts/,
+    },
+    {
+      name: 'data',
+      testMatch: /data\.setup\.ts/,
+      use: { storageState: STORAGE_STATE },
+      dependencies: ['setup'],
     },
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'],
               storageState: STORAGE_STATE,
        },
+      grepInvert: /@needs-data/,
       dependencies: ['setup'],
     },
-    
+    {
+      name: 'chromium-data',
+      use: { ...devices['Desktop Chrome'],
+              storageState: STORAGE_STATE,
+       },
+      grep: /@needs-data/,
+      dependencies: ['data'],
+    },
   ],
 
    testMatch: [
-                //"tests/myfunctions.test.ts",
-
-                "tests/sbomscanner_dashboard.test.ts",
-                "tests/sbomscanner_images.test.ts",
-                "tests/sbomscanner_registries.test.ts",
-                "tests/sbomscanner_vex_management.test.ts",
-                "tests/sbomscanner_workloads.test.ts",
+                // tests/ui, tests/functional, and the Playwright agents' seed test
+                "tests/**/*.spec.ts",
               ],
 
   use: {
         baseURL: process.env.RANCHER_URL || "https://RANCHERURL",
         
-        headless: false,
+        // CI runs headless at full speed; local runs keep the visible, slowed-down browser
+        headless: !!process.env.CI,
     	  ignoreHTTPSErrors: true,
         screenshot: "on",
-        video: "on",
+        video: process.env.CI ? "retain-on-failure" : "on",
         launchOptions: {
-             slowMo: 500,
+             // SLOW_MO=0 runs local tests at full speed (e.g. for Playwright agents)
+             slowMo: process.env.CI ? 0 : Number(process.env.SLOW_MO ?? 500),
              args: ["--start-maximized"]
         },
-        viewport: null,
+        viewport: process.env.CI ? { width: 1600, height: 900 } : null,
     },
 
     //timeout: 60 * 1000 * 5,
@@ -108,13 +117,22 @@ export default defineConfig({
         ["html", {
             open: "never"
         }],
+        // playwright-qase-reporter v2 options; QASE_* env vars (QASE_TESTOPS_RUN_TITLE, ...) override these
         ["playwright-qase-reporter", {
             mode: process.env.QASE_MODE || 'off',
-            projectCode: process.env.QASE_TESTOPS_PROJECT,
-            apiToken: process.env.QASE_TESTOPS_API_TOKEN,
-            runId: process.env.QASE_RUN_ID,
-            runTitle: process.env.QASE_RUN_TITLE || getRunTitle(),
-            uploadAttachments: true,
+            testops: {
+                api: {
+                    token: process.env.QASE_TESTOPS_API_TOKEN,
+                },
+                project: process.env.QASE_TESTOPS_PROJECT,
+                uploadAttachments: true,
+                run: {
+                    id: process.env.QASE_RUN_ID ? parseInt(process.env.QASE_RUN_ID) : undefined,
+                    title: process.env.QASE_RUN_TITLE || getRunTitle(),
+                    description: process.env.QASE_RUN_DESCRIPTION,
+                    tags: process.env.QASE_RUN_TAGS ? process.env.QASE_RUN_TAGS.split(',') : undefined,
+                },
+            },
         }]
     ]
 

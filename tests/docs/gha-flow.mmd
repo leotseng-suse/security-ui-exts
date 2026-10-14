@@ -1,0 +1,41 @@
+flowchart TD
+  T1["Pull request to main<br/>(touches UI or tests)"] --> J
+  T2["Merge to main<br/>(smoke tests only)"] --> J
+  T3["Manual: Run workflow<br/>(choose inputs)"] --> J
+  J{{"e2e job · ubuntu-latest · max 120 min"}} --> ENV{"environment"}
+
+  subgraph S1 ["1 · Cluster + Rancher"]
+    ENV -- "rke2 (default)" --> RKE2["Install RKE2"] --> HELM["Install Rancher (Helm)"]
+    ENV -- "k3s" --> K3D["Install k3d"] --> HELM
+    ENV -- "docker" --> DOCK["Run rancher/rancher container"] --> CM["Install cert-manager"]
+    HELM --> BOOT["Bootstrap admin<br/>random password, skip wizard"]
+    CM --> BOOT
+  end
+
+  subgraph S2 ["2 · SBOMScanner backend"]
+    BOOT --> SC["Default StorageClass"] --> SCAN{"scanner"}
+    SCAN -- "community (default)" --> CNPG["CloudNativePG operator"]
+    SCAN -- "appco" --> APPCO["Log in to SUSE<br/>Application Collection"] --> CNPG
+    CNPG --> SBOM["Install SBOMScanner chart"]
+  end
+
+  subgraph S3 ["3 · UI extension"]
+    SBOM --> UI{"ui"}
+    UI -- "source (default)" --> SRC["Build pkg/vulnerability-scanner<br/>serve + register UIPlugin"]
+    UI -- "github" --> GH["Install released extension<br/>from GitHub Pages"]
+  end
+
+  subgraph S4 ["4 · Test"]
+    SRC --> SUM["Summarize test environment<br/>versions → job summary + Qase title"]
+    GH --> SUM
+    SUM --> PW["Install Playwright + Chromium"]
+    PW --> RUN["Run tests<br/>npx playwright test --grep @ui<br/>(merge to main: --grep @smoke)<br/>CI=true · 1 retry"]
+    RUN -. "if Qase token is set" .-> QASE[("Qase TestOps run")]
+  end
+
+  subgraph S5 ["5 · Always"]
+    RUN -- "failed / cancelled" --> DIAG["Collect diagnostics<br/>pods, events, UIPlugins, logs"]
+    RUN --> ART["Upload artifact playwright-report-N<br/>HTML report, screenshots, videos · 15 days"]
+    DIAG --> ART
+    ART --> CLEAN["Clean up"]
+  end

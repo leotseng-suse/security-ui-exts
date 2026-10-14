@@ -10,9 +10,13 @@ node_modules/
 # UI ext automation
 _reports_/
 jsonReports/
-package-lock.json
-package.json
 pw_report_summary.html
 tests/sbomscanner.test.ts-snapshots/
 uiversion.json
 summary.out
+
+# Playwright MCP (agents) artifacts
+.playwright-mcp/
+
+# Claude Code personal settings
+.claude/settings.local.json

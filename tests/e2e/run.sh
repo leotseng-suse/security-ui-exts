@@ -55,7 +55,7 @@ comment
 # npx playwright test --retries=1 --trace on
 # npx playwright test --retries=0 > log_${_date_run_}.txt
 #npx playwright test tests/sbomscanner.test.ts tests/sbomscanner_registries.test.ts > _reports_/${_test_ts_}_SBOMSCANNERUI/output.log 
-npx playwright test --retries=0 > _reports_/SBOMSCANNER_UITEST_${_test_ts_}/output.log 
+npx playwright test --retries=0 --grep @ui > _reports_/SBOMSCANNER_UITEST_${_test_ts_}/output.log 
 
 echo "---------------------------------------------------"
 echo "- UI Test Completed - "

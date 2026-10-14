@@ -1,0 +1,12 @@
+flowchart TD
+  A["❌ E2E UI Tests run failed"] --> B{"Which step failed?"}
+  B -- "an install step" --> C["Environment problem<br/>open that step's log, then<br/>diagnostics/ in the artifact"]
+  B -- "Run tests" --> D["Download playwright-report-N<br/>open playwright-report/index.html"]
+  D --> E{"Do most tests fail<br/>the same way?"}
+  E -- "yes" --> F["Check diagnostics/<br/>crash-looping SBOMScanner pod<br/>or missing UIPlugin"]
+  E -- "no" --> G{"Did the 'data' setup fail?<br/>(@needs-data tests: did not run)"}
+  G -- "yes" --> H["Seed scan didn't complete<br/>check the e2e-seed scan job<br/>and SBOMScanner pods"]
+  G -- "no" --> I["Open screenshot / video / trace"]
+  I --> K{"What changed?"}
+  K -- "UI changed on purpose" --> L["Fix the locator in pages/"]
+  K -- "app behaves wrongly" --> M["Report a product bug"]

@@ -1,25 +1,24 @@
-/* Filename: fixture-with-pom.ts
- * Enhanced fixture with Page Object Model support
+/* Filename: fixture.ts
+ * Test fixture that provides the page objects (see pages/index.ts)
  */
 
 import { test as base, expect } from '@playwright/test';
 import {
   DashboardPage,
-  SBOMScannerDashboardPage,
-  ImagesPageEnhanced,
-  RegistriesPageEnhanced,
-  VexManagementPageEnhanced,
-  WorkloadsScanPageEnhanced
+  ImagesPage,
+  WorkloadsScanPage,
+  RegistriesPage,
+  VexManagementPage,
+  SideNav
 } from '../pages';
 
 type PageObjects = {
   dashboardPage: DashboardPage;
-  sbomDashboardPage: SBOMScannerDashboardPage;
-  // Enhanced page objects (use these for all tests)
-  imagesPageEnhanced: ImagesPageEnhanced;
-  registriesPageEnhanced: RegistriesPageEnhanced;
-  vexManagementPageEnhanced: VexManagementPageEnhanced;
-  workloadsScanPageEnhanced: WorkloadsScanPageEnhanced;
+  imagesPage: ImagesPage;
+  workloadsScanPage: WorkloadsScanPage;
+  registriesPage: RegistriesPage;
+  vexManagementPage: VexManagementPage;
+  sideNav: SideNav;
 };
 
 export const test = base.extend<PageObjects>({
@@ -64,25 +63,24 @@ export const test = base.extend<PageObjects>({
     await use(new DashboardPage(page));
   },
 
-  sbomDashboardPage: async ({ page }, use) => {
-    await use(new SBOMScannerDashboardPage(page));
+  imagesPage: async ({ page }, use) => {
+    await use(new ImagesPage(page));
   },
 
-  // Enhanced page objects (use these for all tests)
-  imagesPageEnhanced: async ({ page }, use) => {
-    await use(new ImagesPageEnhanced(page));
+  workloadsScanPage: async ({ page }, use) => {
+    await use(new WorkloadsScanPage(page));
   },
 
-  registriesPageEnhanced: async ({ page }, use) => {
-    await use(new RegistriesPageEnhanced(page));
+  registriesPage: async ({ page }, use) => {
+    await use(new RegistriesPage(page));
   },
 
-  vexManagementPageEnhanced: async ({ page }, use) => {
-    await use(new VexManagementPageEnhanced(page));
+  vexManagementPage: async ({ page }, use) => {
+    await use(new VexManagementPage(page));
   },
 
-  workloadsScanPageEnhanced: async ({ page }, use) => {
-    await use(new WorkloadsScanPageEnhanced(page));
+  sideNav: async ({ page }, use) => {
+    await use(new SideNav(page));
   },
 });
 
