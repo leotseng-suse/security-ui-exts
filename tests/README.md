@@ -400,8 +400,8 @@ CI provides `RANCHER_URL`, `TEST_USERNAME` and `TEST_PASSWORD` itself, so no `.e
 
 | Name | Kind | Required for |
 |---|---|---|
-| `QASE_TESTOPS_API_TOKEN` | secret | Uploading to Qase (upload is skipped when unset, so forks still pass) |
-| `QASE_TESTOPS_PROJECT` | variable or secret | Qase project code (e.g. `SS`) |
+| `QASE_TESTOPS_API_TOKEN` | secret | Uploading to Qase (skipped when unset and on PRs from forks, which get no secrets; the run shows a "Qase upload skipped" notice) |
+| `QASE_TESTOPS_PROJECT` | variable | Qase project code (e.g. `SS`). Use a variable, not a secret: a secret is masked everywhere in logs (`PA***WORD`), and the job summary can't link to the Qase run |
 | `DOCKERHUB_USERNAME` / `DOCKERHUB_PASSWORD` | secret | Avoid Docker Hub rate limits during the Helm install (optional) |
 | `APPCO_USERNAME` / `APPCO_PASSWORD` | secret | `scanner=appco` only |
 
@@ -440,7 +440,7 @@ The config always writes three reports:
 
 With `QASE_MODE=testops`, results also go to Qase TestOps. Configure it with:
 
-- `QASE_TESTOPS_API_TOKEN` and `QASE_TESTOPS_PROJECT`;
+- `QASE_TESTOPS_API_TOKEN` (secret) and `QASE_TESTOPS_PROJECT` (variable);
 - optionally `QASE_RUN_ID`, to report into an existing run;
 - `QASE_RUN_TITLE`, `QASE_RUN_DESCRIPTION`, `QASE_RUN_TAGS`. CI fills these in, and locally the title
   defaults to `SBOM Scanner UI Test - v<ui version> - <date>`.

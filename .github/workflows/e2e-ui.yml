@@ -429,21 +429,54 @@ jobs:
         working-directory: tests/e2e
         timeout-minutes: 60
         run: |
+          if [ "$QASE_MODE" == off ]; then
+            if [ "$FORK_PR" == true ]; then
+              why="secrets aren't available to pull requests from forks"
+            elif [ -z "$QASE_TESTOPS_PROJECT" ]; then
+              why="the QASE_TESTOPS_PROJECT repository variable isn't set"
+            else
+              why="the QASE_TESTOPS_API_TOKEN secret isn't set"
+            fi
+            echo "::notice title=Qase upload skipped::Results stay in GitHub Actions: $why"
+            echo "> Qase upload skipped: $why" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+          # Output is kept for "Link Qase run", which reads the run id the Qase reporter logs
           if [ "$TEST_SUITE" == smoke ]; then
             # The chromium project excludes @needs-data, so the data seed doesn't run
-            npx playwright test --project=chromium --grep @smoke
+            npx playwright test --project=chromium --grep @smoke 2>&1 | tee "$RUNNER_TEMP/playwright.log"
           else
-            npx playwright test --grep @ui
+            npx playwright test --grep @ui 2>&1 | tee "$RUNNER_TEMP/playwright.log"
           fi
         env:
           CI: true
           SHOW_CONSOLE_ERRORS: false
           TEST_RETRIES: 1
-          # Upload to Qase only when a token is configured, so forks and PRs without secrets still pass
-          QASE_MODE: ${{ secrets.QASE_TESTOPS_API_TOKEN != '' && 'testops' || 'off' }}
+          # Upload to Qase only when the token and project are configured, so forks and PRs without secrets still pass.
+          # The project code is a variable, not a secret: secrets are masked everywhere, including the Qase link
+          QASE_MODE: ${{ secrets.QASE_TESTOPS_API_TOKEN != '' && vars.QASE_TESTOPS_PROJECT != '' && 'testops' || 'off' }}
           QASE_TESTOPS_API_TOKEN: ${{ secrets.QASE_TESTOPS_API_TOKEN }}
-          QASE_TESTOPS_PROJECT: ${{ vars.QASE_TESTOPS_PROJECT || secrets.QASE_TESTOPS_PROJECT }}
+          QASE_TESTOPS_PROJECT: ${{ vars.QASE_TESTOPS_PROJECT }}
+          FORK_PR: ${{ github.event.pull_request.head.repo.fork || false }}
           # QASE_RUN_TITLE / QASE_RUN_DESCRIPTION / QASE_RUN_TAGS come from "Summarize test environment"
+
+      - name: Link Qase run
+        if: always()
+        run: |
+          # "[INFO] qase: Run 1579 completed"
+          run_id=$(sed 's/\x1b\[[0-9;]*m//g' "$RUNNER_TEMP/playwright.log" 2>/dev/null | grep -oP 'qase: Run \K[0-9]+(?= completed)' | tail -1) || true
+          [ -n "$run_id" ] || exit 0
+
+          # A secret would be masked as *** in the link, so the project code has to be a variable
+          if [ -n "$QASE_PROJECT" ]; then
+            link="https://app.qase.io/run/$QASE_PROJECT/dashboard/$run_id"
+            echo "::notice title=Qase run $run_id::$link"
+            echo "**Qase run:** [$run_id]($link)" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "**Qase run:** $run_id (set the QASE_TESTOPS_PROJECT repository variable to get a link)" >> "$GITHUB_STEP_SUMMARY"
+          fi
+        env:
+          QASE_PROJECT: ${{ vars.QASE_TESTOPS_PROJECT }}
 
       # ================================================================================================
       # Artifacts & diagnostics
