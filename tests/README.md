@@ -324,14 +324,14 @@ then runs `npx playwright test --grep @ui` (only the `@smoke` tests after a merg
 | `rancher` | `p*` | Version constraint: `p2.14`, `c2.13`, `p*` (latest Prime), `p2.15-0` (devel) |
 | `k8s` | derived | Kubernetes minor for rke2/k3s, e.g. `v1.33`. Empty = from the Rancher support matrix |
 | `ui` | `source` | `source` (build `pkg/vulnerability-scanner` from the checkout), `github` (released chart) |
-| `scanner` | `community` | `community` (charts.kubewarden.io), `appco` (SUSE Application Collection, needs secrets) |
+| `scanner` | `helm-repo` | `helm-repo` (Helm repos charts.kubewarden.io and cloudnative-pg.github.io), `appco` (SUSE Application Collection, needs secrets) |
 | `sbomscanner` | latest | SBOMScanner chart version |
 
 From the CLI:
 
 ```bash
 gh workflow run e2e-ui.yml --ref <branch> \
-  -f environment=k3s -f rancher='p2.14' -f ui=source -f scanner=community
+  -f environment=k3s -f rancher='p2.14' -f ui=source -f scanner=helm-repo
 gh run watch
 ```
 
@@ -354,7 +354,7 @@ flowchart TD
 
   subgraph S2 ["2 · SBOMScanner backend"]
     BOOT --> SC["Default StorageClass"] --> SCAN{"scanner"}
-    SCAN -- "community (default)" --> CNPG["CloudNativePG operator"]
+    SCAN -- "helm-repo (default)" --> HREPO["Add Helm repos<br/>charts.kubewarden.io<br/>cloudnative-pg.github.io"] --> CNPG["CloudNativePG operator"]
     SCAN -- "appco" --> APPCO["Log in to SUSE<br/>Application Collection"] --> CNPG
     CNPG --> SBOM["Install SBOMScanner chart"]
   end

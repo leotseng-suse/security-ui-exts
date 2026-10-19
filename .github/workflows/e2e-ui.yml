@@ -30,10 +30,10 @@ on:
       scanner:
         description: SBOMScanner backend charts from
         type: choice
-        default: community
+        default: helm-repo
         options:
-          - community  # charts.kubewarden.io + cloudnative-pg.github.io, no credentials
-          - appco      # SUSE Application Collection (product build), needs APPCO_* secrets
+          - helm-repo  # Helm repos charts.kubewarden.io + cloudnative-pg.github.io, no credentials
+          - appco      # SUSE Application Collection, needs APPCO_* secrets
       sbomscanner:
         description: SBOMScanner chart version (empty = latest)
         default: ''
@@ -74,7 +74,7 @@ env:
   # Read by rancher.sh / cluster_k3d.sh; also used to pick the RKE2 channel
   K3S: ${{ inputs.k8s || '' }}
   UI_FROM: ${{ inputs.ui || 'source' }}
-  SCANNER_FROM: ${{ inputs.scanner || 'community' }}
+  SCANNER_FROM: ${{ inputs.scanner || 'helm-repo' }}
   SBOMSCANNER_VERSION: ${{ inputs.sbomscanner || '' }}
   SBOMSCANNER_NS: cattle-sbomscanner-system
   # smoke: one page-load test per page, no data seed. ui: every @ui test
@@ -388,12 +388,17 @@ jobs:
             ui_detail="released chart $ui_chart from https://rancher.github.io/security-ui-exts"
           fi
 
-          title="[$TEST_SUITE] Rancher $channel $CHART_VER ($RANCHER_ENV, $k8s) | UI $ui | SBOMScanner ${scanner%% *} ($SCANNER_FROM) | #$GITHUB_RUN_NUMBER"
+          case "$SCANNER_FROM" in
+            appco) scanner_src="SUSE Application Collection" ;;
+            *)     scanner_src="charts.kubewarden.io" ;;
+          esac
+
+          title="[$TEST_SUITE] Rancher $channel $CHART_VER ($RANCHER_ENV, $k8s) | UI $ui | SBOMScanner ${scanner%% *} ($scanner_src) | #$GITHUB_RUN_NUMBER"
           details=(
             "Rancher|$channel $CHART_VER, installed with $RANCHER_ENV"
             "Kubernetes (local cluster)|$k8s"
             "UI extension|$ui_detail"
-            "SBOMScanner|$scanner from $SCANNER_FROM charts"
+            "SBOMScanner|$scanner from $scanner_src"
             "CloudNativePG|$cnpg"
             "Tests|@$TEST_SUITE"
             "Trigger|$GITHUB_EVENT_NAME by $GITHUB_ACTOR"

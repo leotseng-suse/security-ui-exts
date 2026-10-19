@@ -14,7 +14,7 @@ flowchart TD
 
   subgraph S2 ["2 · SBOMScanner backend"]
     BOOT --> SC["Default StorageClass"] --> SCAN{"scanner"}
-    SCAN -- "community (default)" --> CNPG["CloudNativePG operator"]
+    SCAN -- "helm-repo (default)" --> HREPO["Add Helm repos<br/>charts.kubewarden.io<br/>cloudnative-pg.github.io"] --> CNPG["CloudNativePG operator"]
     SCAN -- "appco" --> APPCO["Log in to SUSE<br/>Application Collection"] --> CNPG
     CNPG --> SBOM["Install SBOMScanner chart"]
   end
