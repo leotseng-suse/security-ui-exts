@@ -285,7 +285,12 @@ jobs:
           else
             helm repo add kubewarden https://charts.kubewarden.io --force-update
             chart=kubewarden/sbomscanner
-            args=()
+            # The chart default public.ecr.aws rate-limits shared runner IPs (TOOMANYREQUESTS),
+            # so use Trivy's own default mirror. The worker accepts only one repository each.
+            args=(
+              --set worker.trivyDBRepository=mirror.gcr.io/aquasec/trivy-db
+              --set worker.trivyJavaDBRepository=mirror.gcr.io/aquasec/trivy-java-db
+            )
           fi
           helm install ssvs "$chart" -n "$SBOMSCANNER_NS" --create-namespace "${args[@]}" \
             ${SBOMSCANNER_VERSION:+--version "$SBOMSCANNER_VERSION"} \
