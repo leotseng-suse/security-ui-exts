@@ -322,7 +322,7 @@ then runs `npx playwright test --grep @ui` (only the `@smoke` tests after a merg
 |---|---|---|
 | `environment` | `rke2` | `rke2` (RKE2 + Rancher Helm chart), `k3s` (k3d + Helm chart), `docker` (`rancher/rancher` container) |
 | `rancher` | `p*` | Version constraint: `p2.14`, `c2.13`, `p*` (latest Prime), `p2.15-0` (devel) |
-| `k8s` | derived | Kubernetes minor for rke2/k3s, e.g. `v1.33`. Empty = from the Rancher support matrix |
+| `k8s` | derived | Kubernetes minor for rke2/k3s, e.g. `v1.33`. Empty = the newest minor the Rancher version supports. A value outside the supported range runs with a warning |
 | `ui` | `source` | `source` (build `pkg/vulnerability-scanner` from the checkout), `github` (released chart) |
 | `scanner` | `helm-repo` | `helm-repo` (Helm repos charts.kubewarden.io and cloudnative-pg.github.io), `appco` (SUSE Application Collection, needs secrets) |
 | `sbomscanner` | latest | SBOMScanner chart version |
@@ -382,9 +382,13 @@ flowchart TD
 ```
 
 1. **Cluster and Rancher.** Install RKE2, k3d, or Rancher in Docker using the shared
-   [kubewarden e2e scripts](https://github.com/kubewarden/kubewarden-end-to-end-tests). Then bootstrap
-   the admin user with a random password and skip the first-login wizard.
+   [kubewarden e2e scripts](https://github.com/kubewarden/kubewarden-end-to-end-tests). The Kubernetes
+   minor comes from the support matrix table in their `rancher.sh`. RKE2 is installed as the newest
+   published patch of that minor, looked up from GitHub releases, so `update.rke2.io` isn't needed.
+   Then bootstrap the admin user with a random password and skip the first-login wizard.
 2. **SBOMScanner backend.** Default StorageClass, CloudNativePG, then the SBOMScanner chart (1 replica each).
+   The default `helm-repo` source downloads the Trivy DB from `mirror.gcr.io`, because `public.ecr.aws`
+   rate-limits GitHub runners.
 3. **Extension.** Build from source and register it as a `UIPlugin` served from `127.0.0.1:4500`,
    or install the released chart.
 4. **Summarize test environment.** Read the installed versions back from the cluster and use them for

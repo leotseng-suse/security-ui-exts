@@ -119,11 +119,31 @@ jobs:
 
           chart=$(grep -oP '^CHART: \K\S+' <<< "$out")  # e2e-rancher-prime/rancher:2.14.2
           [[ "$chart" == e2e-rancher-*/rancher:* ]] || { echo "::error::No Rancher chart matches '$RANCHER'"; exit 1; }
-          k8s=$(grep -oP '^v[0-9]+\.[0-9]+' <<< "${K3S:-$(grep -oP '^K3S version: \K\S+' <<< "$out")}") || true
+          chart_ver=${chart##*:}
+
+          # Support matrix table in rancher.sh, e.g. `2.15*) k8s="v1.36" ;; # v1.34 - v1.36`.
+          # Without a row, cluster_k3d.sh silently falls back to the newest k3s, which may be unsupported.
+          line=$(grep -P "^\s*${chart_ver%.*}\*\)" scripts/rancher.sh) || true
+          k8s_max=$(grep -oP 'k8s="\K[^"]+' <<< "$line") || true
+          k8s_min=$(grep -oP '# \Kv[0-9.]+(?= - )' <<< "$line") || true
+          k8s=$(grep -oP '^v[0-9]+\.[0-9]+' <<< "${K3S:-$k8s_max}") || true
+
+          if [ "$RANCHER_ENV" != docker ]; then
+            if [ -z "$k8s" ]; then
+              echo "::error::Rancher ${chart_ver%.*} has no Kubernetes version in the rancher.sh support table." \
+                "Bump the kubewarden-end-to-end-tests ref, or set the k8s input."
+              exit 1
+            fi
+            if [ -z "$k8s_max" ]; then
+              echo "::warning title=Kubernetes version not checked::Rancher ${chart_ver%.*} isn't in the rancher.sh support table; using k8s=$k8s as given."
+            elif [ "$(printf '%s\n' "$k8s_min" "$k8s" "$k8s_max" | sort -V | sed -n 2p)" != "$k8s" ]; then
+              echo "::warning title=Unsupported Kubernetes version::Rancher ${chart_ver%.*} supports $k8s_min - $k8s_max, but k8s=$k8s."
+            fi
+          fi
 
           {
             echo "CHART_REPO=${chart%/rancher:*}"
-            echo "CHART_VER=${chart##*:}"
+            echo "CHART_VER=$chart_ver"
             echo "K8S_MINOR=$k8s"
           } | tee -a "$GITHUB_ENV"
 
@@ -133,7 +153,18 @@ jobs:
       - name: Install RKE2
         if: env.RANCHER_ENV == 'rke2'
         run: |
-          curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_CHANNEL="${K8S_MINOR:-stable}" sh -
+          # Install an exact version: with a channel, get.rke2.io asks update.rke2.io for the version, and
+          # when that server is down it uses the channel name as the version and 404s on the download.
+          # Pick the newest published patch of the supported minor that has its release files.
+          ver=$(gh api 'repos/rancher/rke2/releases?per_page=100' --paginate --jq "
+            .[] | select(.draft == false and .prerelease == false)
+                | select(.tag_name | startswith(\"$K8S_MINOR.\"))
+                | select(any(.assets[]; .name == \"sha256sum-amd64.txt\"))
+                | .tag_name" | sort -V | tail -1)
+          [ -n "$ver" ] || { echo "::error::No published RKE2 release for $K8S_MINOR"; exit 1; }
+          echo "Installing RKE2 $ver"
+
+          curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_VERSION="$ver" sh -
           sudo systemctl enable --now rke2-server.service
 
           mkdir -p ~/.kube
@@ -148,6 +179,8 @@ jobs:
             kubectl annotate "$(kubectl get ingressclass -o name | head -1)" ingressclass.kubernetes.io/is-default-class=true
           fi
           kubectl get nodes -o wide
+        env:
+          GH_TOKEN: ${{ github.token }}
 
       # k3s: rancher.sh creates the k3d cluster itself
       - name: Install Rancher (Helm)
@@ -193,16 +226,23 @@ jobs:
           password="$(openssl rand -hex 12)"
           echo "::add-mask::$password"
 
-          token=$(curl -fsk "$url/v3-public/localProviders/local?action=login" \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"admin","password":"sa","responseType":"json"}' | jq -er .token)
+          # Rancher answers /ping before it has finished setting up the admin user, so the first calls
+          # can fail (e.g. 409 "the object has been modified"). Retry them for up to 2 minutes.
+          retry() { for _ in {1..24}; do "$@" && return; sleep 5; done; "$@"; }
+
+          login() {
+            curl -fsk "$url/v3-public/localProviders/local?action=login" \
+              -H 'Content-Type: application/json' \
+              -d '{"username":"admin","password":"sa","responseType":"json"}' | jq -er .token
+          }
+          token=$(retry login)
           echo "::add-mask::$token"
           api() { curl -fsk -H "Authorization: Bearer $token" -H 'Content-Type: application/json' "$@"; }
 
-          api "$url/v3/users?action=changepassword" \
+          retry api "$url/v3/users?action=changepassword" \
             -d "$(jq -n --arg p "$password" '{currentPassword:"sa", newPassword:$p}')"
           for kv in "server-url=$url" "eula-agreed=$(date -u +%FT%TZ)" "first-login=false"; do
-            api -X PUT "$url/v3/settings/${kv%%=*}" -d "$(jq -n --arg v "${kv#*=}" '{value:$v}')" >/dev/null
+            retry api -X PUT "$url/v3/settings/${kv%%=*}" -d "$(jq -n --arg v "${kv#*=}" '{value:$v}')" >/dev/null
           done
 
           for i in {1..60}; do
