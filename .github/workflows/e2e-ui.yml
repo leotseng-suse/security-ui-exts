@@ -18,7 +18,7 @@ on:
         description: Rancher version constraint - p2.14 | c2.13 | p* (latest prime) | p2.15-0 (devel)
         default: 'p*'
       k8s:
-        description: Kubernetes minor for rke2/k3s, e.g. v1.33 (empty = derived from Rancher support matrix)
+        description: Kubernetes for rke2/k3s - minor (v1.33) or exact patch (v1.33.5) (empty = derived from Rancher support matrix)
         default: ''
       ui:
         description: Vulnerability Scanner UI extension from
@@ -37,6 +37,14 @@ on:
       sbomscanner:
         description: SBOMScanner chart version (empty = latest)
         default: ''
+      runner:
+        description: GitHub-hosted runner image
+        type: choice
+        default: ubuntu-latest
+        options:
+          - ubuntu-latest
+          - ubuntu-26.04
+          - ubuntu-24.04
 
   pull_request:
     branches: [main]
@@ -71,7 +79,7 @@ env:
   # First value after && must be truthy, otherwise the value after || is returned
   RANCHER_ENV: ${{ inputs.environment || 'rke2' }}
   RANCHER: ${{ inputs.rancher || 'p*' }}
-  # Read by rancher.sh / cluster_k3d.sh; also used to pick the RKE2 channel
+  # Read by rancher.sh / cluster_k3d.sh; also used to pick the RKE2 release (minor or exact patch)
   K3S: ${{ inputs.k8s || '' }}
   UI_FROM: ${{ inputs.ui || 'source' }}
   SCANNER_FROM: ${{ inputs.scanner || 'helm-repo' }}
@@ -82,7 +90,7 @@ env:
 
 jobs:
   e2e:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 120
     steps:
       # ================================================================================================
@@ -105,6 +113,23 @@ jobs:
       # install over it. No-op on fresh GitHub-hosted VMs.
       - name: Pre-clean
         run: .github/scripts/e2e-cleanup.sh
+
+      # Kernel 7.0.0-1019-azure (ubuntu-26.04 image 20261101) turns runc's change_profile into the
+      # cri-containerd AppArmor profile into a stacked `cri-containerd.apparmor.d//&unconfined` label
+      # ("change_profile unprivileged unconfined converted to stacking"). Processes in one container then
+      # carry different labels and the profile denies signals between them, so Rancher's
+      # `pkill -x kubectl` can't end the helm-operation proxy container and the pods stay 1/2 NotReady.
+      - name: Relax AppArmor change_profile restriction
+        run: |
+          keys=(apparmor_restrict_unprivileged_unconfined apparmor_restrict_unprivileged_userns)
+          for k in "${keys[@]}"; do
+            [ -e "/proc/sys/kernel/$k" ] && echo "before: kernel.$k=$(cat "/proc/sys/kernel/$k")"
+          done
+          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_unconfined ]; then
+            sudo sysctl -w kernel.apparmor_restrict_unprivileged_unconfined=0
+          else
+            echo "kernel.apparmor_restrict_unprivileged_unconfined not present on $(uname -r)"
+          fi
 
       - name: Install k3d
         if: env.RANCHER_ENV == 'k3s'
@@ -155,13 +180,19 @@ jobs:
         run: |
           # Install an exact version: with a channel, get.rke2.io asks update.rke2.io for the version, and
           # when that server is down it uses the channel name as the version and 404s on the download.
-          # Pick the newest published patch of the supported minor that has its release files.
+          # Pick the newest published release that has its release files: of the exact patch when the
+          # k8s input has one (v1.36.5 -> v1.36.5+rke2rN), otherwise of the supported minor.
+          if [[ "$K3S" =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            prefix="${BASH_REMATCH[0]}+"
+          else
+            prefix="$K8S_MINOR."
+          fi
           ver=$(gh api 'repos/rancher/rke2/releases?per_page=100' --paginate --jq "
             .[] | select(.draft == false and .prerelease == false)
-                | select(.tag_name | startswith(\"$K8S_MINOR.\"))
+                | select(.tag_name | startswith(\"$prefix\"))
                 | select(any(.assets[]; .name == \"sha256sum-amd64.txt\"))
                 | .tag_name" | sort -V | tail -1)
-          [ -n "$ver" ] || { echo "::error::No published RKE2 release for $K8S_MINOR"; exit 1; }
+          [ -n "$ver" ] || { echo "::error::No published RKE2 release for ${prefix%[.+]}"; exit 1; }
           echo "Installing RKE2 $ver"
 
           curl -sfL https://get.rke2.io | sudo INSTALL_RKE2_VERSION="$ver" sh -
@@ -548,6 +579,42 @@ jobs:
             kubectl logs -n "$SBOMSCANNER_NS" "$d" --all-containers --tail=500 > "diagnostics/${d##*/}.log"
           done
           cp serve-pkgs.log diagnostics/ 2>/dev/null || true
+
+          if [ "$RANCHER_ENV" = rke2 ]; then
+            sudo tail -n 2000 /var/lib/rancher/rke2/agent/logs/kubelet.log > diagnostics/kubelet.log
+            sudo tail -n 2000 /var/lib/rancher/rke2/agent/containerd/containerd.log > diagnostics/containerd.log
+          fi
+
+          # Rancher ends a helm-operation pod by exec'ing `pkill -x kubectl` in its proxy container once
+          # the helm container exits 0. Pods stuck at 1/2 NotReady mean that kill didn't take effect:
+          # show the proxy's processes, then try the same kill with a plain kubectl exec.
+          stuck=$(kubectl get pods -n cattle-system -o json | jq -r '.items[]
+            | select(.metadata.name | startswith("helm-operation-"))
+            | select(any(.status.containerStatuses[]?; .name == "helm" and .state.terminated.exitCode == 0))
+            | select(any(.status.containerStatuses[]?; .name == "proxy" and .state.running != null))
+            | .metadata.name')
+          for p in $stuck; do
+            echo "=== $p"
+            kubectl get pod -n cattle-system "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}: {.state}{"\n"}{end}'
+            echo "--- processes in proxy (pid comm cmdline)"
+            kubectl exec -n cattle-system "$p" -c proxy -- sh -c \
+              'for d in /proc/[0-9]*; do echo "${d#/proc/} $(cat $d/comm 2>/dev/null) $(tr "\0" " " < $d/cmdline 2>/dev/null)"; done'
+            echo "--- pkill -x kubectl"
+            kubectl exec -n cattle-system "$p" -c proxy -- sh -c 'pkill --version 2>&1 | head -1; pkill -x kubectl; echo "pkill exit=$?"'
+            echo "kubectl exec exit=$?"
+            sleep 5
+            echo "--- after"
+            kubectl get pod -n cattle-system "$p" -o jsonpath='{range .status.containerStatuses[*]}{.name}: {.state}{"\n"}{end}'
+          done 2>&1 | tee diagnostics/helm-operation-probe.txt
+
+          # Host side, after the probe so its signal denials are included
+          {
+            uname -a
+            for f in /proc/sys/kernel/apparmor_restrict_*; do [ -e "$f" ] && echo "${f##*/}=$(cat "$f")"; done
+            sudo aa-status 2>&1 | head -5
+            echo "--- dmesg (apparmor/denied/seccomp)"
+            sudo dmesg -T | grep -iE 'apparmor|denied|seccomp' | tail -300
+          } > diagnostics/host.txt 2>&1
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always()
