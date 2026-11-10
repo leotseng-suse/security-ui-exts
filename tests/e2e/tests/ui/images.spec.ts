@@ -15,20 +15,9 @@ test.describe('Images', { tag: '@ui' }, () => {
   });
 
   // One page load, one step per area; soft assertions report every missing element, not just the first.
-  test('shows the filters, report buttons and image table', async ({ imagesPage }) => {
-    await test.step('image reference search is empty', async () => {
-      await expect.soft(imagesPage.imageSearch).toBeVisible();
-      await expect.soft(imagesPage.imageSearch).toHaveValue('');
-    });
-
-    await test.step('filters default to "Any"', async () => {
-      await expect.soft(imagesPage.severityFilter).toContainText('Any');
-      await expect.soft(imagesPage.inUseFilter).toContainText('Any');
-      await expect.soft(imagesPage.repositoryFilter).toContainText('Any');
-      await expect.soft(imagesPage.registryFilter).toContainText('Any');
-      await expect.soft(imagesPage.platformFilter).toContainText('Any');
-    });
-
+  // The search box and filters are only rendered when there are images, so they're checked in the
+  // @needs-data test below.
+  test('shows the report buttons and image table', async ({ imagesPage }) => {
     await test.step('report buttons', async () => {
       await expect.soft(imagesPage.downloadFullReportButton).toBeVisible();
       await expect.soft(imagesPage.downloadCustomReportButton).toBeVisible();
@@ -48,8 +37,25 @@ test.describe('Images', { tag: '@ui' }, () => {
     });
   });
 
-  test('enables download full report when images exist', { tag: '@needs-data' }, async ({ imagesPage }) => {
+  test('shows the filters and enables the full report when images exist', { tag: '@needs-data' }, async ({ imagesPage }) => {
+    // The filters only render once the table has rows
     await expect(imagesPage.table.rows.first()).toBeVisible();
-    await expect(imagesPage.downloadFullReportButton).toBeEnabled();
+
+    await test.step('image reference search is empty', async () => {
+      await expect.soft(imagesPage.imageSearch).toBeVisible();
+      await expect.soft(imagesPage.imageSearch).toHaveValue('');
+    });
+
+    await test.step('filters default to "Any"', async () => {
+      await expect.soft(imagesPage.severityFilter).toContainText('Any');
+      await expect.soft(imagesPage.inUseFilter).toContainText('Any');
+      await expect.soft(imagesPage.repositoryFilter).toContainText('Any');
+      await expect.soft(imagesPage.registryFilter).toContainText('Any');
+      await expect.soft(imagesPage.platformFilter).toContainText('Any');
+    });
+
+    await test.step('"Download full report" is enabled', async () => {
+      await expect.soft(imagesPage.downloadFullReportButton).toBeEnabled();
+    });
   });
 });

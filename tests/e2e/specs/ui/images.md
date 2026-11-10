@@ -23,34 +23,38 @@ One scenario = one test; each numbered step = one `test.step` with soft assertio
     - expect: URL matches imageScanner/images
     - expect: Page heading reads 'Images'
 
-#### 1.2. shows the filters, report buttons and image table
+#### 1.2. shows the report buttons and image table
 
 **File:** `tests/ui/images.spec.ts`
 
 **Tags:** @ui
 
+The search box and filters are not rendered while the Images table is empty (intended UX), so they are
+covered by 1.3, which runs with seeded images.
+
 **Steps:**
-  1. image reference search is empty
-    - expect: Search box is visible and empty
-  2. filters default to "Any"
-    - expect: Severity, In use, Repository, Registry and Platform filters all show 'Any'
-  3. report buttons
+  1. report buttons
     - expect: 'Download full report' button is visible
     - expect: 'Download custom report' button is visible and disabled (nothing selected)
     - expect: Note: Do not click either button - it triggers a download
-  4. "Group by repository" is unchecked
+  2. "Group by repository" is unchecked
     - expect: Checkbox 'Group by repository' is visible and unchecked
-  5. table columns and rows or empty state
+  3. table columns and rows or empty state
     - expect: Column headers: Image reference, Affecting CVEs, In use, Repository, Registry, Platform, Digest
     - expect: Either image rows or 'There are no rows to show.' is visible - accept both
 
-#### 1.3. enables download full report when images exist
+#### 1.3. shows the filters and enables the full report when images exist
 
 **File:** `tests/ui/images.spec.ts`
 
 **Tags:** @ui @needs-data
 
 **Steps:**
-  1. Check the table and the full report button
-    - expect: At least one image row is visible
+  1. Wait for the table to show image rows
+    - expect: At least one image row is visible (the filters only render once there are rows)
+  2. image reference search is empty
+    - expect: Search box is visible and empty
+  3. filters default to "Any"
+    - expect: Severity, In use, Repository, Registry and Platform filters all show 'Any'
+  4. "Download full report" is enabled
     - expect: 'Download full report' button is enabled
